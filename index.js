@@ -1,92 +1,118 @@
 // C:\projects\ai-image-generator-project\functions\index.js
 
-// Import Firebase Functions and Admin SDK
-const functions = require('firebase-functions');
+// Import Firebase Admin SDK, Express, CORS
 const admin = require('firebase-admin');
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
 
-// Initialize Firebase Admin SDK (used for interacting with other Firebase services,
-// though not strictly required just for an HTTP function. It's good practice to include.)
+// IMPORTANT: Import the main v2 functions object for 2nd Generation functions
+const functions = require('firebase-functions/v2'); 
+
+// node-fetch is needed for making HTTP requests to external APIs
+const fetch = require('node-fetch');
+
+// Initialize Firebase Admin SDK
 admin.initializeApp();
 
-// Create an Express app instance.
-// We're using Express because it helps manage routes and middleware,
-// similar to your original server.js structure.
+// Initialize Express app
 const app = express();
-
-// Enable CORS for all origins.
-// This is crucial to allow your frontend (which will be on a different domain
-// once deployed) to make requests to this backend function.
-// For production, you might want to restrict 'origin' to your frontend's domain.
+// Enable CORS for all origins (adjust for production if needed)
 app.use(cors({ origin: true }));
-
-// Parse JSON request bodies. This middleware is needed to read the 'prompt' from the request.
+// Enable JSON body parsing
 app.use(express.json());
 
-// Define the main API endpoint for image generation.
-// This is an HTTP POST request handler for the '/generate-image' path.
+// Define the POST endpoint for image generation
 app.post('/generate-image', async (req, res) => {
-  try {
-    const { prompt } = req.body; // Extract the 'prompt' from the request body
+    try {
+        // Access the Stability AI API key from Firebase Secrets (environment variable)
+        // This variable is securely injected because 'STABILITY_KEY' is listed in the 'secrets' array below.
+        const STABILITY_API_KEY = process.env.STABILITY_KEY;
 
-    // Retrieve Stability AI API Key from Firebase Functions environment variables.
-    // IMPORTANT: This key will be set securely in Firebase's configuration later,
-    // NOT hardcoded in the code.
-    const STABILITY_API_KEY = process.env.STABILITY_KEY;
-
-    // Basic check to ensure the API key is available
-    if (!STABILITY_API_KEY) {
-      console.error('Stability AI API Key not configured in Firebase Functions environment variables.');
-      // Send a 500 Internal Server Error response if the key is missing
-      return res.status(500).json({ error: 'Server configuration error: API key missing.' });
-    }
-
-    // Make the API call to Stability AI for image generation
-    const response = await axios.post(
-      'https://api.stability.ai/v1/generation/stable-diffusion-v1-6/text-to-image',
-      {
-        // Request payload for Stability AI API
-        text_prompts: [{ text: prompt }], // The user's prompt
-        cfg_scale: 7,                     // Classifier-free guidance scale
-        height: 512,                      // Output image height
-        width: 512,                       // Output image width
-        steps: 30,                        // Number of diffusion steps
-        samples: 1                        // Number of images to generate (1 for simplicity)
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json', // Specify content type
-          'Accept': 'application/json',       // Expect JSON response
-          'Authorization': `Bearer ${STABILITY_API_KEY}` // Authorization header with your API key
+        // Check if the API key is set
+        if (!STABILITY_API_KEY) {
+            console.error('Stability AI API Key not configured or accessible. Please ensure it is set as a Firebase Secret named STABILITY_KEY and bound to this function.');
+            return res.status(500).json({ error: 'Server configuration error: Stability AI API key missing or inaccessible.' });
         }
-      }
-    );
 
-    // Extract the base64 encoded image data from the Stability AI response
-    const imageData = response.data.artifacts[0].base64;
-    // Send the image data back to the frontend
-    res.json({ image: imageData });
+        // Extract the prompt from the request body
+        const { prompt } = req.body;
 
-  } catch (error) {
-    // Error handling: log the error and send an appropriate response to the frontend
-    console.error('Error generating image:', error.message);
-    if (error.response) {
-      // If it's an Axios error from the Stability AI API, log more details
-      console.error('Stability AI API Error Status:', error.response.status);
-      console.error('Stability AI API Error Data:', error.response.data);
-      // Pass the Stability AI API's error message back to the frontend if available
-      res.status(error.response.status).json({ error: error.response.data || 'Failed to generate image from external API.' });
-    } else {
-      // Generic error for other issues
-      res.status(500).json({ error: 'Failed to generate image due to an unexpected server error.' });
+        // Validate the prompt
+        if (!prompt) {
+            return res.status(400).json({ error: 'Prompt is required.' });
+        }
+
+        console.log(`Attempting to generate image with Stability AI for prompt: "${prompt}"`);
+
+        // Define the Stability AI API endpoint for text-to-image generation
+        const STABILITY_API_URL = "https://api.stability.ai/v1/generation/stable-diffusion-v1-6/text-to-image";
+
+        // Define the payload for the Stability AI API request
+        const stabilityPayload = {
+            text_prompts: [
+                {
+                    text: prompt,
+                    weight: 1
+                }
+            ],
+            cfg_scale: 7,          // Classifier-free guidance scale
+            clip_guidance_preset: "FAST_BLUE", // Clip guidance preset
+            height: 512,           // Image height
+            width: 512,            // Image width
+            samples: 1,            // Number of images to generate (1 for simplicity)
+            steps: 30              // Number of diffusion steps
+        };
+
+        // Make the POST request to the Stability AI API
+        const stabilityResponse = await fetch(STABILITY_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Authorization': `Bearer ${STABILITY_API_KEY}` // Include API key in Authorization header
+            },
+            body: JSON.stringify(stabilityPayload)
+        });
+
+        // Parse the JSON response from Stability AI
+        const stabilityResult = await stabilityResponse.json();
+
+        // Check if the response was successful and contains artifacts (images)
+        if (stabilityResponse.ok && stabilityResult.artifacts && stabilityResult.artifacts.length > 0) {
+            // Stability AI returns base64 encoded images in the 'base64' field
+            const imageData = stabilityResult.artifacts[0].base64;
+            const mimeType = 'image/png'; // Stability AI usually returns PNG
+
+            // Send the base64 image data back to the frontend
+            res.json({ image: imageData, mimeType: mimeType });
+        } else {
+            // Log the full error response from Stability AI for debugging
+            console.error('Failed to generate image from Stability AI API:', JSON.stringify(stabilityResult, null, 2));
+            // Provide a more specific error message if available from the API
+            const errorMessage = stabilityResult.message || 'No image data returned from AI or API error.';
+            res.status(stabilityResponse.status || 500).json({ error: `Failed to generate image: ${errorMessage}` });
+        }
+
+    } catch (error) {
+        // Catch any unexpected errors during the process
+        console.error('Error generating image with Stability AI API:', error);
+
+        // Provide specific error messages for common issues
+        if (error.message && error.message.includes('invalid api key')) {
+            res.status(401).json({ error: 'Authentication error: Invalid Stability AI API key.' });
+        } else if (error.message && error.message.includes('rate limit exceeded')) {
+            res.status(429).json({ error: 'Rate limit exceeded with Stability AI API. Please try again later.' });
+        } else if (error.message && error.message.includes('insufficient_balance')) {
+            res.status(402).json({ error: 'Billing issue with Stability AI API. Check your account.' });
+        } else {
+            res.status(500).json({ error: `Failed to generate image due to an unexpected server error: ${error.message || 'Unknown error'}.` });
+        }
     }
-  }
 });
 
-// Expose the Express app as an HTTP Cloud Function.
-// The name 'api' here becomes part of the function's URL.
-// When deployed, this function will be accessible at a URL like:
-// https://<region>-<project-id>.cloudfunctions.net/api
-exports.api = functions.https.onRequest(app);
+// Export the Express app as an HTTP Cloud Function.
+// IMPORTANT: For 2nd Generation functions, you MUST list the secrets you want to bind
+// in the 'secrets' array. This makes 'process.env.STABILITY_KEY' available.
+exports.api = functions.https.onRequest({
+    secrets: ['STABILITY_KEY'], // List the secret name as a string here
+}, app);
