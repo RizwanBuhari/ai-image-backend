@@ -45,7 +45,7 @@ app.post('/generate-image', async (req, res) => {
         console.log(`Attempting to generate image with Stability AI for prompt: "${prompt}"`);
 
         // Define the Stability AI API endpoint for text-to-image generation
-        const STABILITY_API_URL = "https://api.stability.ai/v1/generation/stable-diffusion-v1-6/text-to-image";
+        const STABILITY_API_URL = "https://api.stability.ai/v1/generation/stable-diffusion-xl-1024-v1-0/text-to-image";
 
         // Define the payload for the Stability AI API request
         const stabilityPayload = {
@@ -57,8 +57,8 @@ app.post('/generate-image', async (req, res) => {
             ],
             cfg_scale: 7,          // Classifier-free guidance scale
             clip_guidance_preset: "FAST_BLUE", // Clip guidance preset
-            height: 512,           // Image height
-            width: 512,            // Image width
+            height: 1024,           // Image height
+            width: 1024,            // Image width
             samples: 1,            // Number of images to generate (1 for simplicity)
             steps: 30              // Number of diffusion steps
         };
