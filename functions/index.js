@@ -1,4 +1,3 @@
-// Temporary change to force commit
 // C:\projects\ai-image-generator-project\functions\index.js
 
 // Import Firebase Admin SDK, Express, CORS
